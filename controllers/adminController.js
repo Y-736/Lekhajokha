@@ -1,26 +1,29 @@
 const pool = require('../config/db');
 const bcrypt = require('bcryptjs');
 const { generateToken } = require('../config/jwt');
-const { sendApprovalEmail,sendRejectionEmail } = require('../services/emailService');
-const { validationResult } = require('express-validator');
+const { sendApprovalEmail, sendRejectionEmail } = require('../services/emailService');
 
-// Admin login
+// Helper function to handle database connections
+const withConnection = async (callback) => {
+  let connection;
+  try {
+    connection = await pool.getConnection();
+    return await callback(connection);
+  } finally {
+    if (connection) connection.release();
+  }
+};
+
+// Admin login (working)
 const login = async (req, res) => {
   try {
-    // Validate input
-    const errors = validationResult(req);
-    if (!errors.isEmpty()) {
-      return res.status(400).json({ 
-        success: false,
-        errors: errors.array(),
-        message: 'Validation failed'
-      });
-    }
-
     const { email, password } = req.body;
     
-    // Find admin
-    const [admins] = await pool.query('SELECT * FROM admins WHERE email = ?', [email]);
+    const [admins] = await pool.query(
+      'SELECT * FROM admins WHERE email = ?', 
+      [email]
+    );
+    
     if (admins.length === 0) {
       return res.status(401).json({ 
         success: false,
@@ -30,6 +33,7 @@ const login = async (req, res) => {
     
     const admin = admins[0];
     const isMatch = await bcrypt.compare(password, admin.password);
+    
     if (!isMatch) {
       return res.status(401).json({ 
         success: false,
@@ -37,29 +41,22 @@ const login = async (req, res) => {
       });
     }
     
-    // Generate token
     const token = generateToken({
       id: admin.adminid,
       role: 'admin',
       email: admin.email
     });
     
-    // Set secure cookie
-    res.cookie('adminToken', token, {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === 'production',
-      maxAge: 24 * 60 * 60 * 1000 // 1 day
-    });
-    
-    res.status(200).json({ 
+    res.status(200).json({
       success: true,
       token,
       admin: { 
         adminid: admin.adminid, 
         name: admin.name, 
         email: admin.email 
-      } 
+      }
     });
+    
   } catch (error) {
     console.error('Admin login error:', error);
     res.status(500).json({ 
@@ -69,24 +66,72 @@ const login = async (req, res) => {
   }
 };
 
-// Get all pending retailers
+// Get dashboard stats (fixed)
+const getDashboardStats = async (req, res) => {
+  let connection;
+  try {
+    connection = await pool.getConnection();
+    
+    // Execute all queries in parallel for better performance
+    const [totalRetailers, pendingRetailers, approvedRetailers] = await Promise.all([
+      connection.query('SELECT COUNT(*) as count FROM retailers'),
+      connection.query(`SELECT COUNT(*) as count FROM new_retailers WHERE status = 'Pending'`),
+      connection.query(`SELECT COUNT(*) as count FROM new_retailers WHERE status = 'Approved'`)
+    ]);
+
+    res.status(200).json({
+      success: true,
+      data: {
+        totalRetailers: totalRetailers[0][0].count,
+        pendingRetailers: pendingRetailers[0][0].count,
+        approvedRetailers: approvedRetailers[0][0].count
+      }
+    });
+    
+  } catch (error) {
+    console.error('Dashboard error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to fetch dashboard data'
+    });
+  } finally {
+    if (connection) connection.release();
+  }
+};
+
+// Get pending retailers (fixed)
 const getPendingRetailers = async (req, res) => {
   try {
-    const [retailers] = await pool.query(`
-      SELECT nr.*, r.name, r.address, r.mobile, r.email as retailer_email
-      FROM new_retailers nr
-      JOIN retailers r ON nr.retailer_id = r.shopid
-      WHERE nr.status = 'Pending'
-      ORDER BY nr.created_at DESC
-    `);
+    const retailers = await withConnection(async (connection) => {
+      const [rows] = await connection.query(`
+        SELECT 
+          nr.id,
+          nr.retailer_id,
+          r.name,
+          r.email,
+          r.mobile,
+          nr.business_name,
+          nr.business_type,
+          nr.gst_number,
+          nr.location,
+          nr.aadhar,
+          nr.created_at
+        FROM new_retailers nr
+        JOIN retailers r ON nr.retailer_id = r.shopid
+        WHERE nr.status = 'Pending'
+        ORDER BY nr.created_at DESC
+      `);
+      return rows;
+    });
     
     res.status(200).json({
       success: true,
       count: retailers.length,
       data: retailers
     });
+    
   } catch (error) {
-    console.error('Error fetching pending retailers:', error);
+    console.error('Pending retailers error:', error);
     res.status(500).json({ 
       success: false,
       message: 'Failed to fetch pending retailers' 
@@ -94,107 +139,135 @@ const getPendingRetailers = async (req, res) => {
   }
 };
 
+// Update retailer status (fixed with transaction)
 const updateRetailerStatus = async (req, res) => {
+  const { id } = req.params;
+  const { status, adminNotes } = req.body; // These are the required fields
   let connection;
+
+  // 1. Validate required fields
+  if (!status) {
+    return res.status(400).json({
+      success: false,
+      message: 'Status field is required',
+      requiredFields: ['status'],
+      note: 'Admin notes are optional'
+    });
+  }
+
+  // 2. Validate status value
+  const normalizedStatus = typeof status === 'string' 
+    ? status.charAt(0).toUpperCase() + status.slice(1).toLowerCase()
+    : null;
+
+  const validStatuses = ['Pending', 'Approved', 'Rejected'];
+  if (!validStatuses.includes(normalizedStatus)) {
+    return res.status(400).json({
+      success: false,
+      message: 'Invalid status value',
+      received: status,
+      validOptions: validStatuses,
+      note: 'Status is case-insensitive (e.g., "approved" or "APPROVED" both work)'
+    });
+  }
+
   try {
-    const { id } = req.params;
-    const { status, adminNotes } = req.body;
-
-    // Validate input against your ENUM values
-    if (!['Pending', 'Approved', 'Rejected'].includes(status)) {
-      return res.status(400).json({
-        success: false,
-        message: 'Status must be Pending, Approved, or Rejected'
-      });
-    }
-
     connection = await pool.getConnection();
     await connection.beginTransaction();
 
-    // Update new_retailers table - using correct column names
-    const [updateResult] = await connection.query(
+    // 3. Update status in database
+    const [result] = await connection.query(
       `UPDATE new_retailers 
-       SET status = ?, admin_notes = ?
+       SET status = ?, admin_notes = ?, updated_at = CURRENT_TIMESTAMP
        WHERE id = ?`,
-      [status, adminNotes || null, id]
+      [normalizedStatus, adminNotes || null, id]
     );
 
-    if (updateResult.affectedRows === 0) {
+    if (result.affectedRows === 0) {
       await connection.rollback();
       return res.status(404).json({
         success: false,
-        message: 'Retailer not found'
+        message: 'Retailer application not found'
       });
     }
 
-    // Get retailer_id for main table update
-    const [retailer] = await connection.query(
-      'SELECT retailer_id FROM new_retailers WHERE id = ?',
-      [id]
-    );
-
-    // Update main retailers table (without updated_at)
-    await connection.query(
-      `UPDATE retailers 
-       SET status = ?
-       WHERE shopid = ?`,
-      [status, retailer[0].retailer_id]
-    );
+    // 4. If approved, update retailer table
+    if (normalizedStatus === 'Approved') {
+      await connection.query(
+        `UPDATE retailers r
+         JOIN new_retailers nr ON r.shopid = nr.retailer_id
+         SET r.address = nr.location
+         WHERE nr.id = ?`,
+        [id]
+      );
+    }
 
     await connection.commit();
 
     res.json({
       success: true,
-      message: `Retailer status updated to ${status}`
+      message: `Retailer status updated to ${normalizedStatus}`
     });
 
   } catch (error) {
     if (connection) await connection.rollback();
-    console.error('Database error:', error);
+    console.error('Status update error:', error);
     res.status(500).json({
       success: false,
-      message: 'Database operation failed',
-      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+      message: 'Failed to update status',
+      error: error.message
     });
   } finally {
     if (connection) connection.release();
   }
 };
 
-
-
-// Get all retailers with pagination
+// Get all retailers with pagination (fixed)
 const getAllRetailers = async (req, res) => {
   try {
-    const page = parseInt(req.query.page) || 1;
-    const limit = parseInt(req.query.limit) || 10;
+    const { page = 1, limit = 10 } = req.query;
     const offset = (page - 1) * limit;
     
-    // Get total count
-    const [total] = await pool.query('SELECT COUNT(*) as count FROM retailers');
-    const totalCount = total[0].count;
-    
-    // Get paginated results
-    const [retailers] = await pool.query(
-      `SELECT shopid, name, email, mobile, status, register_date 
-       FROM retailers 
-       ORDER BY register_date DESC
-       LIMIT ? OFFSET ?`,
-      [limit, offset]
-    );
+    const results = await withConnection(async (connection) => {
+      // Get total count
+      const [[{ count }]] = await connection.query(
+        'SELECT COUNT(*) as count FROM retailers'
+      );
+      
+      // Get paginated results - CORRECTED QUERY
+      const [retailers] = await connection.query(`
+        SELECT 
+          r.shopid, 
+          r.name, 
+          r.email, 
+          r.mobile,
+          r.address,
+          r.register_date,
+          nr.status,
+          nr.business_name,
+          nr.business_type
+        FROM retailers r
+        LEFT JOIN new_retailers nr ON r.shopid = nr.retailer_id
+        ORDER BY r.register_date DESC
+        LIMIT ? OFFSET ?
+      `, [parseInt(limit), parseInt(offset)]);
+      
+      return { count, retailers };
+    });
     
     res.status(200).json({
       success: true,
       pagination: {
-        total: totalCount,
-        page,
-        pages: Math.ceil(totalCount / limit),
-        limit
+        total: results.count,
+        page: parseInt(page),
+        pages: Math.ceil(results.count / limit),
+        limit: parseInt(limit)
       },
-      data: retailers
+      data: results.retailers
     });
+    
   } catch (error) {
-    console.error('Error fetching retailers:', error);
+    console.error('All retailers error:', error);
     res.status(500).json({
       success: false,
       message: 'Failed to fetch retailers'
@@ -204,6 +277,7 @@ const getAllRetailers = async (req, res) => {
 
 module.exports = {
   login,
+  getDashboardStats,
   getPendingRetailers,
   updateRetailerStatus,
   getAllRetailers

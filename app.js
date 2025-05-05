@@ -29,7 +29,10 @@ app.use((err, req, res, next) => {
   }
   next();
 });
-
+app.use(cors({
+  origin: 'http://localhost:5173',  // allow frontend origin
+  credentials: true                 // allow cookies if needed
+}));
 // Routes
 app.use('/api/admin', adminRoutes);
 app.use('/api/auth', authRoutes);

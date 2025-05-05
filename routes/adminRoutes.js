@@ -1,11 +1,15 @@
 const express = require('express');
 const router = express.Router();
 const adminController = require('../controllers/adminController');
-const { loginValidation, statusValidation } = require('../middleware/adminValidation');
+const authenticate = require('../middleware/auth');
 
-router.post('/login', loginValidation, adminController.login);
-router.get('/retailers/pending', adminController.getPendingRetailers);
-router.put('/retailers/:id/status', statusValidation, adminController.updateRetailerStatus);
-router.get('/retailers', adminController.getAllRetailers);
+// Admin Login
+router.post('/login', adminController.login);  // Make sure adminLogin is exported
+
+// Protected routes
+router.get('/dashboard', authenticate(['admin']), adminController.getDashboardStats);
+router.get('/retailers/pending', authenticate(['admin']), adminController.getPendingRetailers);
+router.put('/retailers/:id/status', authenticate(['admin']), adminController.updateRetailerStatus);
+router.get('/retailers', authenticate(['admin']), adminController.getAllRetailers);
 
 module.exports = router;

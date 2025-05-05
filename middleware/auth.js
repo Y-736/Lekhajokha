@@ -1,49 +1,49 @@
-const { verifyToken } = require('../config/jwt');
-
-// middlewares/auth.js
-// middlewares/auth.js
 const jwt = require('jsonwebtoken');
 
-const authenticate = (roles) => {
+const authenticate = (allowedRoles) => {
   return async (req, res, next) => {
     try {
       // 1. Get token from header
-      const token = req.header('Authorization')?.replace('Bearer ', '');
-      
+      const authHeader = req.header('Authorization');
+      if (!authHeader) {
+        return res.status(401).json({ 
+          success: false,
+          message: 'Authorization header missing'
+        });
+      }
+
+      const token = authHeader.replace('Bearer ', '');
       if (!token) {
         return res.status(401).json({ 
           success: false,
-          message: 'Authorization token required'
+          message: 'Token not found in header'
         });
       }
 
       // 2. Verify token
-      const decoded = jwt.verify(token, process.env.JWT_SECRET || 'your_fallback_secret');
-      
-      // 3. Check role authorization
-      if (!roles.includes(decoded.role)) {
+      const decoded = jwt.verify(token, process.env.JWT_SECRET);
+      console.log('Decoded token:', decoded); // Debug log
+
+      // 3. Check if user has required role
+      if (allowedRoles && !allowedRoles.includes(decoded.role)) {
         return res.status(403).json({
           success: false,
           message: 'Insufficient permissions'
         });
       }
 
-      // 4. For retailers, verify shop access
-      if (decoded.role === 'retailer') {
-        req.shopid = decoded.id; // Using 'id' from token as shopid
-      }
-
+      // 4. Attach user to request
       req.user = decoded;
       next();
 
     } catch (error) {
-      console.error('JWT Error:', error.message);
+      console.error('Authentication error:', error);
       
-      let message = 'Invalid token';
+      let message = 'Authentication failed';
       if (error.name === 'TokenExpiredError') {
         message = 'Token expired';
       } else if (error.name === 'JsonWebTokenError') {
-        message = 'Malformed token';
+        message = 'Invalid token';
       }
 
       res.status(401).json({
@@ -53,4 +53,5 @@ const authenticate = (roles) => {
     }
   };
 };
+
 module.exports = authenticate;

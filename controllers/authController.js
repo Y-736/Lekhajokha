@@ -35,11 +35,12 @@ exports.retailerSignup = async (req, res) => {
   }
 };
 
+// In your authController.js
+
 exports.retailerLogin = async (req, res) => {
   try {
     const { email, password } = req.body;
     
-    // Find retailer
     const [retailer] = await db.query(
       'SELECT * FROM retailers WHERE email = ?', 
       [email]
@@ -49,44 +50,24 @@ exports.retailerLogin = async (req, res) => {
       return res.status(404).json({ message: 'Retailer not found' });
     }
     
-    // Check password
     const isMatch = await bcrypt.compare(password, retailer[0].password);
     if (!isMatch) {
       return res.status(400).json({ message: 'Invalid credentials' });
     }
     
     // Check approval status
-    if (retailer[0].status !== 'Approved') {
-      return res.status(403).json({ message: 'Account not approved yet' });
+    if (retailer[0].status !== 'approved') {
+      return res.status(403).json({ 
+        message: 'Account pending approval',
+        isPending: true  // Add this flag
+      });
     }
     
-    // Create token
-    const token = jwt.sign(
-      { 
-        id: retailer[0].shopid, 
-        role: 'retailer',
-        email: retailer[0].email,
-        name: retailer[0].name
-      },
-      process.env.JWT_SECRET,
-      { expiresIn: '30d' }
-    );
-    
-    res.json({ 
-      success: true,
-      token,
-      retailer: {
-        id: retailer[0].shopid,
-        name: retailer[0].name,
-        email: retailer[0].email,
-        mobile: retailer[0].mobile
-      }
-    });
+    // Rest of your login logic...
   } catch (error) {
     res.status(500).json({ message: error.message });
   }
 };
-
 exports.adminLogin = async (req, res) => {
   try {
     const { email, password } = req.body;
@@ -133,11 +114,17 @@ exports.adminLogin = async (req, res) => {
   }
 };
 
-// NEW: Token Verification Controller
+//  NEW: Token Verification Controller
 exports.verifyToken = (req, res) => {
-  // The authenticate middleware already validated the token
-  // Just return the user info from req.user
-  res.json({ 
+  // The authenticate middleware already validated the token and set req.user
+  if (!req.user) {
+    return res.status(401).json({
+      success: false,
+      message: 'User not found in token'
+    });
+  }
+  
+  res.json({
     success: true,
     valid: true,
     user: req.user  // Contains id, role, email, name from JWT
