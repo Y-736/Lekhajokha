@@ -29,10 +29,23 @@ app.use((err, req, res, next) => {
   }
   next();
 });
-app.use(cors({
-  origin: 'https://flourishing-praline-b9bb7b.netlify.app',  // allow frontend origin
-  credentials: true                 // allow cookies if needed
-}));
+// app.use(cors({
+//   origin: 'https://flourishing-praline-b9bb7b.netlify.app',  // allow frontend origin
+//   credentials: true                 // allow cookies if needed
+// }));
+
+const corsOptions = {
+  origin: 'https://flourishing-praline-b9bb7b.netlify.app',
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
+  credentials: true
+};
+
+app.use(cors(corsOptions));
+
+// Handle preflight requests for all routes
+app.options('*', cors(corsOptions));
+
 // Routes
 app.use('/api/admin', adminRoutes);
 app.use('/api/auth', authRoutes);
