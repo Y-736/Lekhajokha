@@ -34,16 +34,30 @@ app.use((err, req, res, next) => {
 //   credentials: true                 // allow cookies if needed
 // }));
 
+const allowedOrigins = [
+  'https://flourishing-praline-b9bb7b.netlify.app',
+  // Add other domains if needed
+];
+
 const corsOptions = {
-  origin: 'https://flourishing-praline-b9bb7b.netlify.app',
+  origin: function (origin, callback) {
+    if (!origin || allowedOrigins.indexOf(origin) !== -1) {
+      callback(null, true);
+    } else {
+      callback(new Error('Not allowed by CORS'));
+    }
+  },
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
-  credentials: true
+  credentials: true,
+  preflightContinue: false,
+  optionsSuccessStatus: 204
 };
 
+// Apply CORS to all routes
 app.use(cors(corsOptions));
 
-// Handle preflight requests for all routes
+// Explicitly handle OPTIONS requests
 app.options('*', cors(corsOptions));
 
 // Routes
