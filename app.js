@@ -30,7 +30,7 @@ app.use((err, req, res, next) => {
   next();
 });
 app.use(cors({
-  origin: 'http://localhost:5173',  // allow frontend origin
+  origin: 'https://flourishing-praline-b9bb7b.netlify.app',  // allow frontend origin
   credentials: true                 // allow cookies if needed
 }));
 // Routes
