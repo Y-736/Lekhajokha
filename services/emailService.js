@@ -1,7 +1,9 @@
 const nodemailer = require('nodemailer');
 
 const transporter = nodemailer.createTransport({
-  service: process.env.EMAIL_SERVICE,
+  host: process.env.EMAIL_HOST || 'smtp.gmail.com',
+  port: parseInt(process.env.EMAIL_PORT) || 587,
+  secure: process.env.EMAIL_SECURE === 'true' || false, // true for 465, false for 587
   auth: {
     user: process.env.EMAIL_USER,
     pass: process.env.EMAIL_PASS
@@ -18,7 +20,14 @@ const sendApprovalEmail = async (email, name) => {
            <p>You can now access your retailer dashboard.</p>`
   };
 
-  return transporter.sendMail(mailOptions);
+  try {
+    const result = await transporter.sendMail(mailOptions);
+    console.log(`Approval email sent to ${email}: ${result.messageId}`);
+    return result;
+  } catch (error) {
+    console.error(`Failed to send approval email to ${email}:`, error);
+    throw error;
+  }
 };
 
 const sendRejectionEmail = async (email, name, notes) => {
@@ -32,7 +41,14 @@ const sendRejectionEmail = async (email, name, notes) => {
            <p>Please contact support if you have questions.</p>`
   };
 
-  return transporter.sendMail(mailOptions);
+  try {
+    const result = await transporter.sendMail(mailOptions);
+    console.log(`Rejection email sent to ${email}: ${result.messageId}`);
+    return result;
+  } catch (error) {
+    console.error(`Failed to send rejection email to ${email}:`, error);
+    throw error;
+  }
 };
 
 module.exports = {

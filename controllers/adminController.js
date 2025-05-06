@@ -14,7 +14,7 @@ const withConnection = async (callback) => {
   }
 };
 
-// Admin login (working)
+// Admin login
 const login = async (req, res) => {
   try {
     const { email, password } = req.body;
@@ -66,7 +66,7 @@ const login = async (req, res) => {
   }
 };
 
-// Get dashboard stats (fixed)
+// Get dashboard stats
 const getDashboardStats = async (req, res) => {
   let connection;
   try {
@@ -99,7 +99,7 @@ const getDashboardStats = async (req, res) => {
   }
 };
 
-// Get pending retailers (fixed)
+// Get pending retailers
 const getPendingRetailers = async (req, res) => {
   try {
     const retailers = await withConnection(async (connection) => {
@@ -139,10 +139,10 @@ const getPendingRetailers = async (req, res) => {
   }
 };
 
-// Update retailer status (fixed with transaction)
+// Update retailer status
 const updateRetailerStatus = async (req, res) => {
   const { id } = req.params;
-  const { status, adminNotes } = req.body; // These are the required fields
+  const { status, adminNotes } = req.body;
   let connection;
 
   // 1. Validate required fields
@@ -156,7 +156,7 @@ const updateRetailerStatus = async (req, res) => {
   }
 
   // 2. Validate status value
-  const normalizedStatus = typeof status === 'string' 
+  const normalizedStatus = typeof status === 'string'
     ? status.charAt(0).toUpperCase() + status.slice(1).toLowerCase()
     : null;
 
@@ -175,7 +175,24 @@ const updateRetailerStatus = async (req, res) => {
     connection = await pool.getConnection();
     await connection.beginTransaction();
 
-    // 3. Update status in database
+    // 3. Fetch retailer details (email, name, business_name) for email notification
+    const [retailer] = await connection.query(
+      `SELECT nr.email, r.name, nr.business_name 
+       FROM new_retailers nr
+       JOIN retailers r ON nr.retailer_id = r.shopid
+       WHERE nr.id = ?`,
+      [id]
+    );
+
+    if (retailer.length === 0) {
+      await connection.rollback();
+      return res.status(404).json({
+        success: false,
+        message: 'Retailer application not found'
+      });
+    }
+
+    // 4. Update status in new_retailers table
     const [result] = await connection.query(
       `UPDATE new_retailers 
        SET status = ?, admin_notes = ?, updated_at = CURRENT_TIMESTAMP
@@ -191,7 +208,7 @@ const updateRetailerStatus = async (req, res) => {
       });
     }
 
-    // 4. If approved, update retailer table
+    // 5. If approved, update retailers table
     if (normalizedStatus === 'Approved') {
       await connection.query(
         `UPDATE retailers r
@@ -203,6 +220,16 @@ const updateRetailerStatus = async (req, res) => {
     }
 
     await connection.commit();
+
+    // 6. Send email notification based on status
+    const retailerName = retailer[0].name || retailer[0].business_name || 'Retailer';
+    if (normalizedStatus === 'Approved') {
+      console.log(`Sending approval email to ${retailer[0].email}`);
+      await sendApprovalEmail(retailer[0].email, retailerName);
+    } else if (normalizedStatus === 'Rejected') {
+      console.log(`Sending rejection email to ${retailer[0].email}`);
+      await sendRejectionEmail(retailer[0].email, retailerName, adminNotes);
+    }
 
     res.json({
       success: true,
@@ -222,7 +249,7 @@ const updateRetailerStatus = async (req, res) => {
   }
 };
 
-// Get all retailers with pagination (fixed)
+// Get all retailers with pagination
 const getAllRetailers = async (req, res) => {
   try {
     const { page = 1, limit = 10 } = req.query;
@@ -234,7 +261,7 @@ const getAllRetailers = async (req, res) => {
         'SELECT COUNT(*) as count FROM retailers'
       );
       
-      // Get paginated results - CORRECTED QUERY
+      // Get paginated results
       const [retailers] = await connection.query(`
         SELECT 
           r.shopid, 
