@@ -1,14 +1,14 @@
 const express = require('express');
 const router = express.Router();
 const retailerController = require('../controllers/retailerController');
+const  authenticate  = require('../middleware/auth');
 
-// Retailer signup
+// Public routes
 router.post('/signup', retailerController.signup);
-
-// Retailer login
 router.post('/login', retailerController.login);
 
-// Get retailer profile (Retailer only)
-router.get('/profile', retailerController.getProfile);
+// Protected routes
+router.post('/complete-profile', authenticate, retailerController.completeProfile);
+router.get('/check-status', authenticate, retailerController.checkStatus);
 
 module.exports = router;
